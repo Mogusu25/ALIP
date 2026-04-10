@@ -28,7 +28,8 @@ const sampleQuestions: GeneratedQuestion[] = [
   },
   {
     type: "True / False",
-    prompt: "The learner should use generated questions to strengthen understanding.",
+    prompt:
+      "The learner should use generated questions to strengthen understanding.",
   },
 ];
 
@@ -36,7 +37,7 @@ export default function Home() {
   const [theme, setTheme] = useState<ThemeMode>("dark");
   const [content, setContent] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState("");
-  const [pendingFileName, setPendingFileName] = useState("");
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [outputView, setOutputView] = useState<OutputView>(null);
 
   const [summaryText, setSummaryText] = useState("");
@@ -44,6 +45,9 @@ export default function Home() {
   const [generatedQuestions, setGeneratedQuestions] = useState<
     GeneratedQuestion[]
   >([]);
+
+  const [isUploading, setIsUploading] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
 
   const acceptedFileTypes =
     ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv";
@@ -66,7 +70,8 @@ export default function Home() {
       selected: "bg-[#8B5CF6] text-white border-[#8B5CF6]",
       clear:
         "bg-transparent text-slate-200 border-white/12 hover:bg-white/8",
-      tabIdle: "bg-transparent text-slate-200 border-white/10 hover:bg-white/5",
+      tabIdle:
+        "bg-transparent text-slate-200 border-white/10 hover:bg-white/5",
       tabActive: "bg-[#14B8A6] text-[#0B1320] border-[#14B8A6]",
       chip: "bg-white/5 border-white/10 text-slate-300",
       heroGlow:
@@ -85,7 +90,8 @@ export default function Home() {
       selected: "bg-[#8B5CF6] text-white border-[#8B5CF6]",
       clear:
         "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
-      tabIdle: "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
+      tabIdle:
+        "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
       tabActive: "bg-[#0F766E] text-white border-[#0F766E]",
       chip: "bg-white border-slate-300 text-slate-700",
       heroGlow:
@@ -100,32 +106,72 @@ export default function Home() {
   const handlePickFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setPendingFileName(file.name);
+    setPendingFile(file);
   };
 
-  const handleSubmitSource = () => {
-    if (!pendingFileName) return;
+  const handleSubmitSource = async () => {
+    if (!pendingFile) return;
 
-    setUploadedFileName(pendingFileName);
-    setPendingFileName("");
-    setOutputView(null);
+    try {
+      setIsUploading(true);
 
-    if (!content.trim()) {
-      setContent(
-        `Document loaded: ${pendingFileName}\n\nThis is a frontend preview. In the complete system, text will be extracted from the uploaded document and used to generate summary, explanation, and revision questions.`
-      );
+      const formData = new FormData();
+      formData.append("file", pendingFile);
+
+      const response = await fetch("http://127.0.0.1:8000/extract-text", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Failed to extract text.");
+      }
+
+      setUploadedFileName(data.filename);
+      setContent(data.content);
+      setPendingFile(null);
+      setOutputView(null);
+    } catch (error) {
+      console.error(error);
+      alert("Upload failed. The file may not be supported or readable.");
+    } finally {
+      setIsUploading(false);
     }
   };
 
-  const handleGenerateSummary = () => {
+  const handleGenerateSummary = async () => {
     if (!hasLearningSource) return;
 
-    setOutputView("summary");
-    setSummaryText(
-      `Summary generated from the provided learning material.\n\n${
-        uploadedFileName ? `Source document: ${uploadedFileName}\n\n` : ""
-      }This section will present the main ideas, key points, and revision focus areas in a concise way to help the learner understand the material faster.`
-    );
+    try {
+      setIsSummarizing(true);
+      setOutputView("summary");
+      setSummaryText("Generating summary...");
+
+      const response = await fetch("http://127.0.0.1:8000/summarize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          content,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Failed to generate summary.");
+      }
+
+      setSummaryText(data.summary || "No summary returned.");
+    } catch (error) {
+      console.error(error);
+      setSummaryText("Error generating summary.");
+    } finally {
+      setIsSummarizing(false);
+    }
   };
 
   const handleGenerateExplanation = () => {
@@ -133,7 +179,7 @@ export default function Home() {
 
     setOutputView("explanation");
     setExplanationText(
-      `Explanation generated from the provided learning material.\n\nThis section will break down difficult ideas into a clearer, more understandable explanation so the learner can build confidence before revision or assessment.`
+      `Explanation preview:\n\nThis section will next be connected to the backend so the system can explain the uploaded or pasted material in a clearer, more learner-friendly way.`
     );
   };
 
@@ -147,7 +193,7 @@ export default function Home() {
   const handleClear = () => {
     setContent("");
     setUploadedFileName("");
-    setPendingFileName("");
+    setPendingFile(null);
     setOutputView(null);
     setSummaryText("");
     setExplanationText("");
@@ -211,7 +257,7 @@ export default function Home() {
 
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <section
-          className={`rounded-[28px] border p-6 shadow-[0_18px_60px_rgba(0,0,0,0.08)] transition-all duration-300 ${palette.surface} animate-[fadeInUp_.45s_ease]`}
+          className={`rounded-[28px] border p-6 shadow-[0_18px_60px_rgba(0,0,0,0.08)] transition-all duration-300 ${palette.surface}`}
         >
           <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
             <div>
@@ -235,7 +281,7 @@ export default function Home() {
                     setContent(e.target.value);
                     if (e.target.value.length > 0) {
                       setUploadedFileName("");
-                      setPendingFileName("");
+                      setPendingFile(null);
                     }
                   }}
                   placeholder="Paste lecture notes, article text, revision material, or study content here..."
@@ -244,14 +290,14 @@ export default function Home() {
 
                 {!hasTypedContent && (
                   <div
-                    className={`mt-4 rounded-3xl border border-dashed p-6 text-center transition-all duration-300 hover:-translate-y-0.5 ${palette.surface}`}
+                    className={`mt-4 rounded-3xl border border-dashed p-6 text-center transition-all duration-300 ${palette.surface}`}
                   >
                     <label className="flex cursor-pointer flex-col items-center justify-center">
                       <span className={`text-base font-semibold ${palette.textMain}`}>
                         Upload learning document
                       </span>
                       <span className={`mt-2 text-sm ${palette.textBody}`}>
-                        PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, CSV
+                        PDF, DOCX, PPTX, XLSX, TXT, CSV
                       </span>
                       <input
                         type="file"
@@ -261,18 +307,19 @@ export default function Home() {
                       />
                     </label>
 
-                    {pendingFileName && (
+                    {pendingFile && (
                       <div className="mt-4 flex flex-col items-center gap-3">
                         <span
                           className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
                         >
-                          Selected: {pendingFileName}
+                          Selected: {pendingFile.name}
                         </span>
                         <button
                           onClick={handleSubmitSource}
+                          disabled={isUploading}
                           className={`${actionBase} max-w-xs ${palette.primary}`}
                         >
-                          Submit Source
+                          {isUploading ? "Uploading..." : "Submit Source"}
                         </button>
                       </div>
                     )}
@@ -280,7 +327,7 @@ export default function Home() {
                 )}
 
                 {(uploadedFileName || hasTypedContent) && (
-                  <div className="mt-4 flex flex-wrap gap-3 animate-[fadeIn_.25s_ease]">
+                  <div className="mt-4 flex flex-wrap gap-3">
                     {uploadedFileName && (
                       <span
                         className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
@@ -292,7 +339,7 @@ export default function Home() {
                       <span
                         className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
                       >
-                        Text detected
+                        Text ready
                       </span>
                     )}
                   </div>
@@ -306,8 +353,7 @@ export default function Home() {
                   Generate Study Support
                 </h2>
                 <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
-                  Pick what you want Mwakenya to generate from the source
-                  material. Nothing is selected until you click.
+                  Pick what you want Mwakenya to generate from the source material.
                 </p>
               </div>
 
@@ -316,14 +362,14 @@ export default function Home() {
               >
                 <button
                   onClick={handleGenerateSummary}
-                  disabled={!hasLearningSource}
+                  disabled={!hasLearningSource || isSummarizing}
                   className={`${actionBase} ${
                     outputView === "summary"
                       ? palette.selected
                       : palette.primary
                   }`}
                 >
-                  Generate Summary
+                  {isSummarizing ? "Generating..." : "Generate Summary"}
                 </button>
 
                 <button
@@ -359,7 +405,7 @@ export default function Home() {
         </section>
 
         <section
-          className={`mt-6 rounded-[28px] border p-6 shadow-[0_18px_60px_rgba(0,0,0,0.08)] transition-all duration-300 ${palette.surface} animate-[fadeInUp_.6s_ease]`}
+          className={`mt-6 rounded-[28px] border p-6 shadow-[0_18px_60px_rgba(0,0,0,0.08)] transition-all duration-300 ${palette.surface}`}
         >
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -367,7 +413,8 @@ export default function Home() {
                 Study Output
               </h2>
               <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
-                Your generated learning support appears here after you select an action.
+                Your generated learning support appears here after you select an
+                action.
               </p>
             </div>
 
@@ -409,7 +456,7 @@ export default function Home() {
 
           {!outputView && (
             <div
-              className={`mt-6 rounded-3xl border p-6 animate-[fadeIn_.35s_ease] ${palette.surfaceSoft}`}
+              className={`mt-6 rounded-3xl border p-6 ${palette.surfaceSoft}`}
             >
               <h3 className={`text-lg font-semibold ${palette.textMain}`}>
                 Ready to begin
@@ -423,7 +470,7 @@ export default function Home() {
 
           {outputView === "summary" && (
             <div
-              className={`mt-6 rounded-3xl border p-6 animate-[fadeIn_.35s_ease] ${palette.surfaceSoft}`}
+              className={`mt-6 rounded-3xl border p-6 ${palette.surfaceSoft}`}
             >
               <h3 className={`text-lg font-semibold ${palette.textMain}`}>
                 Generated Summary
@@ -436,7 +483,7 @@ export default function Home() {
 
           {outputView === "explanation" && (
             <div
-              className={`mt-6 rounded-3xl border p-6 animate-[fadeIn_.35s_ease] ${palette.surfaceSoft}`}
+              className={`mt-6 rounded-3xl border p-6 ${palette.surfaceSoft}`}
             >
               <h3 className={`text-lg font-semibold ${palette.textMain}`}>
                 Generated Explanation
@@ -450,7 +497,7 @@ export default function Home() {
           {outputView === "questions" && (
             <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_0.9fr]">
               <div
-                className={`rounded-3xl border p-6 animate-[fadeIn_.35s_ease] ${palette.surfaceSoft}`}
+                className={`rounded-3xl border p-6 ${palette.surfaceSoft}`}
               >
                 <h3 className={`text-lg font-semibold ${palette.textMain}`}>
                   Generated Revision Questions
@@ -464,7 +511,7 @@ export default function Home() {
                   {generatedQuestions.map((item, index) => (
                     <div
                       key={index}
-                      className={`rounded-2xl border p-4 transition-all duration-200 hover:-translate-y-0.5 ${palette.surface}`}
+                      className={`rounded-2xl border p-4 ${palette.surface}`}
                     >
                       <div className="flex items-center justify-between gap-3">
                         <p className={`text-sm font-semibold ${palette.textMain}`}>
@@ -499,7 +546,7 @@ export default function Home() {
               </div>
 
               <div
-                className={`rounded-3xl border p-6 animate-[fadeIn_.45s_ease] ${palette.surfaceSoft}`}
+                className={`rounded-3xl border p-6 ${palette.surfaceSoft}`}
               >
                 <h3 className={`text-lg font-semibold ${palette.textMain}`}>
                   Assessment Value
