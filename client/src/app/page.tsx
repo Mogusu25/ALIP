@@ -1,252 +1,374 @@
 "use client";
 
-import { ChangeEvent, useState } from "react";
+import { ChangeEvent, useMemo, useState } from "react";
 
 type ThemeMode = "dark" | "light";
-type OutputView = "summary" | "explanation" | "questions" | null;
+type OutputTab = "summary" | "explanation" | "quiz" | "flashcards";
 
-type GeneratedQuestion = {
-  type: "Multiple Choice" | "Short Answer" | "True / False";
-  prompt: string;
-  options?: string[];
+type ExtractTextResponse = {
+  filename: string;
+  content: string;
 };
 
-const sampleQuestions: GeneratedQuestion[] = [
+type SummarizeResponse = {
+  summary: string;
+};
+
+type ApiError = {
+  detail?: string;
+};
+
+const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+const sampleQuiz = [
   {
     type: "Multiple Choice",
-    prompt: "What is the primary purpose of the provided study material?",
+    question: "What is the central idea in this learning material?",
     options: [
-      "Entertainment only",
-      "Support understanding and revision",
-      "Replace all examinations",
-      "Measure device performance",
+      "A minor side note from the text",
+      "The main concept the learner should understand",
+      "Only the conclusion paragraph",
+      "A random definition with no relation",
     ],
   },
   {
     type: "Short Answer",
-    prompt: "Write one key concept you learned from this material.",
+    question:
+      "State one important point a student should revise from this topic.",
   },
   {
     type: "True / False",
-    prompt:
-      "The learner should use generated questions to strengthen understanding.",
+    question: "Active recall helps learners prepare better for exams.",
   },
 ];
 
-export default function Home() {
-  const [theme, setTheme] = useState<ThemeMode>("dark");
+const sampleFlashcards = [
+  {
+    front: "Key Concept",
+    back: "A main idea from the study material that should be remembered for revision.",
+  },
+  {
+    front: "Definition",
+    back: "An important meaning or explanation that helps the learner understand the topic.",
+  },
+  {
+    front: "Application",
+    back: "How the concept can be used in examples, practice, or exam questions.",
+  },
+];
+
+export default function Page() {
+  const [theme, setTheme] = useState<ThemeMode>("light");
   const [content, setContent] = useState("");
+  const [summary, setSummary] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [outputView, setOutputView] = useState<OutputView>(null);
-
-  const [summaryText, setSummaryText] = useState("");
-  const [explanationText, setExplanationText] = useState("");
-  const [generatedQuestions, setGeneratedQuestions] = useState<
-    GeneratedQuestion[]
-  >([]);
+  const [activeTab, setActiveTab] = useState<OutputTab>("summary");
 
   const [isUploading, setIsUploading] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
 
-  const acceptedFileTypes =
-    ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv";
-  const hasTypedContent = content.length > 0;
-  const hasLearningSource = Boolean(content.trim() || uploadedFileName);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
+  const acceptedFileTypes = useMemo(
+    () => ".pdf,.docx,.xlsx,.pptx,.txt,.csv",
+    []
+  );
+
+  const hasContent = Boolean(content.trim());
   const isDark = theme === "dark";
 
-  const palette = {
-    dark: {
-      page: "bg-[#0B1320] text-white",
-      surface: "bg-[#111A2B] border-white/10",
-      surfaceSoft: "bg-[#0F1726] border-white/10",
-      textMain: "text-white",
-      textBody: "text-slate-300",
-      textMuted: "text-slate-400",
-      primary: "bg-[#14B8A6] text-[#0B1320] hover:bg-[#0FB5A3]",
-      secondary:
-        "bg-transparent text-white border-white/12 hover:bg-[#8B5CF6] hover:border-[#8B5CF6]",
-      selected: "bg-[#8B5CF6] text-white border-[#8B5CF6]",
-      clear:
-        "bg-transparent text-slate-200 border-white/12 hover:bg-white/8",
-      tabIdle:
-        "bg-transparent text-slate-200 border-white/10 hover:bg-white/5",
-      tabActive: "bg-[#14B8A6] text-[#0B1320] border-[#14B8A6]",
-      chip: "bg-white/5 border-white/10 text-slate-300",
-      heroGlow:
-        "bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.18),transparent_35%),radial-gradient(circle_at_top_right,rgba(139,92,246,0.16),transparent_30%)]",
-    },
-    light: {
-      page: "bg-[#F6F8FC] text-slate-900",
-      surface: "bg-white border-slate-200",
-      surfaceSoft: "bg-[#F9FBFF] border-slate-200",
-      textMain: "text-slate-950",
-      textBody: "text-slate-700",
-      textMuted: "text-slate-500",
-      primary: "bg-[#0F766E] text-white hover:bg-[#0D6B64]",
-      secondary:
-        "bg-white text-slate-900 border-slate-300 hover:bg-[#8B5CF6] hover:text-white hover:border-[#8B5CF6]",
-      selected: "bg-[#8B5CF6] text-white border-[#8B5CF6]",
-      clear:
-        "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
-      tabIdle:
-        "bg-white text-slate-700 border-slate-300 hover:bg-slate-100",
-      tabActive: "bg-[#0F766E] text-white border-[#0F766E]",
-      chip: "bg-white border-slate-300 text-slate-700",
-      heroGlow:
-        "bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.10),transparent_35%),radial-gradient(circle_at_top_right,rgba(139,92,246,0.10),transparent_30%)]",
-    },
-  }[theme];
+  const palette = isDark
+    ? {
+        pageBg: "bg-[#0f172a]",
+        pageText: "text-slate-100",
+        card: "bg-[#111827] border-slate-700/80",
+        cardSoft: "bg-[#1f2937] border-slate-700/80",
+        textMain: "text-white",
+        textBody: "text-slate-300",
+        textMuted: "text-slate-400",
+        input:
+          "bg-[#0b1220] border-slate-700 text-slate-100 placeholder:text-slate-500",
+        primary:
+          "bg-teal-500 hover:bg-teal-400 text-slate-950 border-teal-500",
+        secondary:
+          "bg-transparent hover:bg-slate-800 text-slate-100 border-slate-600",
+        tabActive: "bg-violet-500 text-white border-violet-500",
+        tabIdle:
+          "bg-transparent text-slate-300 border-slate-600 hover:bg-slate-800",
+        chip: "bg-slate-800 text-slate-200 border-slate-600",
+        success: "border-emerald-400/30 bg-emerald-500/10 text-emerald-300",
+        error: "border-rose-400/30 bg-rose-500/10 text-rose-300",
+        badge:
+          "border-teal-400/20 bg-teal-400/10 text-teal-300",
+        topbar:
+          "border-slate-700/70 bg-slate-950/60",
+      }
+    : {
+        pageBg: "bg-[#f8fafc]",
+        pageText: "text-slate-900",
+        card: "bg-white/95 border-slate-200",
+        cardSoft: "bg-[#fcfcff] border-slate-200",
+        textMain: "text-slate-950",
+        textBody: "text-slate-700",
+        textMuted: "text-slate-500",
+        input:
+          "bg-white border-slate-300 text-slate-900 placeholder:text-slate-400",
+        primary:
+          "bg-teal-600 hover:bg-teal-700 text-white border-teal-600",
+        secondary:
+          "bg-white hover:bg-slate-50 text-slate-800 border-slate-300",
+        tabActive: "bg-violet-600 text-white border-violet-600",
+        tabIdle:
+          "bg-white text-slate-700 border-slate-300 hover:bg-slate-50",
+        chip: "bg-slate-50 text-slate-700 border-slate-300",
+        success: "border-emerald-300 bg-emerald-50 text-emerald-700",
+        error: "border-rose-300 bg-rose-50 text-rose-700",
+        badge:
+          "border-teal-300/40 bg-teal-50 text-teal-700",
+        topbar:
+          "border-slate-200/70 bg-white/70",
+      };
 
-  const handleGoHome = () => {
-    setOutputView(null);
+  const resetMessages = () => {
+    setErrorMessage("");
+    setSuccessMessage("");
   };
 
-  const handlePickFile = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const parseError = async (response: Response): Promise<string> => {
+    try {
+      const data = (await response.json()) as ApiError;
+      return data.detail || "Something went wrong. Please try again.";
+    } catch {
+      return "Something went wrong. Please try again.";
+    }
+  };
+
+  const handlePickFile = (event: ChangeEvent<HTMLInputElement>) => {
+    resetMessages();
+    const file = event.target.files?.[0] ?? null;
     setPendingFile(file);
   };
 
-  const handleSubmitSource = async () => {
-    if (!pendingFile) return;
+  const handleExtractText = async () => {
+    if (!pendingFile) {
+      setErrorMessage("Please choose a file first.");
+      return;
+    }
+
+    resetMessages();
 
     try {
       setIsUploading(true);
+      setSummary("");
 
       const formData = new FormData();
       formData.append("file", pendingFile);
 
-      const response = await fetch("http://127.0.0.1:8000/extract-text", {
+      const response = await fetch(`${API_BASE_URL}/extract-text`, {
         method: "POST",
         body: formData,
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to extract text.");
+        throw new Error(await parseError(response));
       }
+
+      const data = (await response.json()) as ExtractTextResponse;
 
       setUploadedFileName(data.filename);
       setContent(data.content);
       setPendingFile(null);
-      setOutputView(null);
+      setActiveTab("summary");
+      setSuccessMessage("Your study material is ready.");
     } catch (error) {
-      console.error(error);
-      alert("Upload failed. The file may not be supported or readable.");
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "We could not process that file. Please try again."
+      );
     } finally {
       setIsUploading(false);
     }
   };
 
   const handleGenerateSummary = async () => {
-    if (!hasLearningSource) return;
+    if (!hasContent) {
+      setErrorMessage("Please paste text or upload a document first.");
+      return;
+    }
+
+    resetMessages();
+    setActiveTab("summary");
 
     try {
       setIsSummarizing(true);
-      setOutputView("summary");
-      setSummaryText("Generating summary...");
+      setSummary("Generating summary...");
 
-      const response = await fetch("http://127.0.0.1:8000/summarize", {
+      const response = await fetch(`${API_BASE_URL}/summarize`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          content,
-        }),
+        body: JSON.stringify({ content }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(data.detail || "Failed to generate summary.");
+        throw new Error(await parseError(response));
       }
 
-      setSummaryText(data.summary || "No summary returned.");
+      const data = (await response.json()) as SummarizeResponse;
+      const cleanSummary =
+        typeof data.summary === "string" ? data.summary.trim() : "";
+
+      setSummary(cleanSummary || "No summary was returned.");
+      setSuccessMessage("Summary generated successfully.");
     } catch (error) {
-      console.error(error);
-      setSummaryText("Error generating summary.");
+      setSummary("");
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "We could not generate the summary. Please try again."
+      );
     } finally {
       setIsSummarizing(false);
     }
   };
 
-  const handleGenerateExplanation = () => {
-    if (!hasLearningSource) return;
+  const handleClear = () => {
+    setContent("");
+    setSummary("");
+    setUploadedFileName("");
+    setPendingFile(null);
+    setErrorMessage("");
+    setSuccessMessage("");
+    setActiveTab("summary");
 
-    setOutputView("explanation");
-    setExplanationText(
-      `Explanation preview:\n\nThis section will next be connected to the backend so the system can explain the uploaded or pasted material in a clearer, more learner-friendly way.`
+    const input = document.getElementById("file-upload") as HTMLInputElement | null;
+    if (input) input.value = "";
+  };
+
+  const actionButton =
+    "w-full rounded-xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50";
+  const tabButton =
+    "rounded-xl border px-4 py-2 text-sm font-medium transition";
+
+  const renderTabContent = () => {
+    if (activeTab === "summary") {
+      return (
+        <div
+          className={`min-h-[320px] whitespace-pre-wrap rounded-2xl border p-5 text-sm leading-7 ${palette.input}`}
+        >
+          {summary ||
+            "Generate a summary to turn your material into revision-friendly notes."}
+        </div>
+      );
+    }
+
+    if (activeTab === "explanation") {
+      return (
+        <div className={`rounded-2xl border p-5 ${palette.cardSoft}`}>
+          <h3 className={`text-lg font-semibold ${palette.textMain}`}>
+            Explanation Mode
+          </h3>
+          <p className={`mt-3 text-sm leading-7 ${palette.textBody}`}>
+            ALIP will explain difficult ideas in simpler language, step by step,
+            like a study coach.
+          </p>
+          <div className={`mt-4 rounded-2xl border p-4 ${palette.card}`}>
+            <p className={`text-sm font-semibold ${palette.textMain}`}>
+              Coming next
+            </p>
+            <p className={`mt-2 text-sm leading-7 ${palette.textBody}`}>
+              The frontend is ready. Next we connect the backend so explanations
+              are generated from the uploaded notes.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    if (activeTab === "quiz") {
+      return (
+        <div className="space-y-4">
+          {sampleQuiz.map((item, index) => (
+            <div key={index} className={`rounded-2xl border p-5 ${palette.cardSoft}`}>
+              <div className="flex items-center justify-between gap-3">
+                <h4 className={`text-base font-semibold ${palette.textMain}`}>
+                  Question {index + 1}
+                </h4>
+                <span
+                  className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
+                >
+                  {item.type}
+                </span>
+              </div>
+
+              <p className={`mt-3 text-sm leading-7 ${palette.textBody}`}>
+                {item.question}
+              </p>
+
+              {"options" in item && item.options ? (
+                <div className="mt-4 space-y-2">
+                  {item.options.map((option) => (
+                    <div
+                      key={option}
+                      className={`rounded-xl border px-4 py-3 text-sm ${palette.card}`}
+                    >
+                      {option}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {sampleFlashcards.map((card, index) => (
+          <div key={index} className={`rounded-2xl border p-5 ${palette.cardSoft}`}>
+            <p className={`text-xs font-semibold uppercase tracking-wide ${palette.textMuted}`}>
+              Front
+            </p>
+            <h3 className={`mt-2 text-lg font-semibold ${palette.textMain}`}>
+              {card.front}
+            </h3>
+
+            <div className="my-4 border-t border-slate-300/40 dark:border-slate-700/60" />
+
+            <p className={`text-xs font-semibold uppercase tracking-wide ${palette.textMuted}`}>
+              Back
+            </p>
+            <p className={`mt-2 text-sm leading-7 ${palette.textBody}`}>
+              {card.back}
+            </p>
+          </div>
+        ))}
+      </div>
     );
   };
 
-  const handleGenerateQuestions = () => {
-    if (!hasLearningSource) return;
-
-    setOutputView("questions");
-    setGeneratedQuestions(sampleQuestions);
-  };
-
-  const handleClear = () => {
-    setContent("");
-    setUploadedFileName("");
-    setPendingFile(null);
-    setOutputView(null);
-    setSummaryText("");
-    setExplanationText("");
-    setGeneratedQuestions([]);
-  };
-
-  const actionBase =
-    "w-full rounded-2xl border px-5 py-3 text-sm font-semibold transition duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 hover:-translate-y-0.5 active:scale-[0.99]";
-
-  const tabBase =
-    "rounded-xl border px-4 py-2 text-sm font-medium transition duration-200 cursor-pointer";
-
-  const themeButtonClass = `grid h-10 w-10 place-items-center rounded-xl border transition duration-200 hover:-translate-y-0.5 ${
-    isDark
-      ? "border-white/10 bg-white/5 text-white hover:bg-white/10"
-      : "border-slate-300 bg-white text-slate-900 hover:bg-slate-100"
-  }`;
-
   return (
-    <main
-      className={`min-h-screen transition-colors duration-500 ${palette.page}`}
-    >
-      <div
-        className={`pointer-events-none absolute inset-x-0 top-0 h-64 blur-3xl ${palette.heroGlow}`}
-      />
-
+    <main className={`min-h-screen ${palette.pageBg} ${palette.pageText}`}>
       <header
-        className={`sticky top-0 z-50 border-b backdrop-blur-xl transition-colors duration-500 ${palette.surface}`}
+        className={`sticky top-0 z-40 border-b backdrop-blur-xl ${palette.topbar}`}
       >
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
-          <button
-            onClick={handleGoHome}
-            className="group flex items-center gap-3 text-left cursor-pointer"
-            aria-label="Go to home"
-          >
-            <div
-              className={`grid h-10 w-10 place-items-center rounded-xl border text-sm font-bold transition-transform duration-200 group-hover:scale-105 ${palette.surfaceSoft}`}
-            >
-              M
-            </div>
-            <div className="leading-tight">
-              <p className={`text-lg font-bold ${palette.textMain}`}>Mwakenya</p>
-              <p className={`text-[11px] ${palette.textMuted}`}>
-                Adaptive Learning Intelligence Platform
-              </p>
-            </div>
-          </button>
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
+          <div>
+            <p className={`text-xl font-bold ${palette.textMain}`}>ALIP</p>
+            <p className={`text-xs ${palette.textMuted}`}>Your AI Study Coach</p>
+          </div>
 
           <button
             onClick={() =>
               setTheme((prev) => (prev === "dark" ? "light" : "dark"))
             }
-            className={themeButtonClass}
+            className={`grid h-10 w-10 place-items-center rounded-xl border ${palette.secondary}`}
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             title={isDark ? "Light mode" : "Dark mode"}
           >
@@ -256,78 +378,82 @@ export default function Home() {
       </header>
 
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <section
-          className={`rounded-[28px] border p-6 shadow-[0_18px_60px_rgba(0,0,0,0.08)] transition-all duration-300 ${palette.surface}`}
-        >
-          <div className="grid gap-6 xl:grid-cols-[1.25fr_0.75fr]">
-            <div>
-              <div className="mb-4">
-                <h1 className={`text-2xl font-semibold ${palette.textMain}`}>
-                  Document Workspace
+        <section className={`rounded-[28px] border p-6 shadow-sm ${palette.card}`}>
+          <div
+            className={`mb-4 inline-flex rounded-full border px-4 py-1 text-xs font-semibold tracking-wide ${palette.badge}`}
+          >
+            EXAM REVISION PLATFORM
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="space-y-5">
+              <div>
+                <h1 className={`text-3xl font-bold tracking-tight ${palette.textMain}`}>
+                  Study smarter with ALIP
                 </h1>
-                <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
-                  Paste notes or upload a learning document. Mwakenya will use
-                  this material as the source for summary, explanation, and
-                  revision questions.
+
+                <p className={`mt-3 max-w-3xl text-sm leading-7 ${palette.textBody}`}>
+                  Upload your notes or paste study material. ALIP helps learners
+                  summarize content, prepare for exams, practice with quizzes,
+                  and revise with more confidence.
                 </p>
               </div>
 
-              <div
-                className={`rounded-3xl border p-4 transition-all duration-300 ${palette.surfaceSoft}`}
-              >
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {["Summaries", "Explanations", "Quizzes", "Flashcards"].map((item) => (
+                  <div key={item} className={`rounded-2xl border p-4 shadow-sm ${palette.cardSoft}`}>
+                    <p className={`text-sm font-semibold ${palette.textMain}`}>{item}</p>
+                    <p className={`mt-1 text-xs ${palette.textMuted}`}>
+                      Study coach support
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <div className={`rounded-2xl border p-5 ${palette.cardSoft}`}>
+                <h2 className={`text-lg font-semibold ${palette.textMain}`}>
+                  Source Material
+                </h2>
+                <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
+                  Paste notes directly or upload a learning document. Supported
+                  files: PDF, DOCX, XLSX, PPTX, TXT, CSV.
+                </p>
+
                 <textarea
                   value={content}
                   onChange={(e) => {
                     setContent(e.target.value);
-                    if (e.target.value.length > 0) {
+                    if (e.target.value.trim().length > 0) {
                       setUploadedFileName("");
-                      setPendingFile(null);
                     }
                   }}
-                  placeholder="Paste lecture notes, article text, revision material, or study content here..."
-                  className={`min-h-[340px] w-full resize-none rounded-3xl border p-5 text-sm outline-none transition duration-300 ${palette.surface} ${palette.textMain}`}
+                  placeholder="Paste lecture notes, revision notes, article text, or topic content here..."
+                  className={`mt-4 min-h-[240px] w-full resize-none rounded-2xl border p-5 text-sm outline-none ${palette.input}`}
                 />
 
-                {!hasTypedContent && (
-                  <div
-                    className={`mt-4 rounded-3xl border border-dashed p-6 text-center transition-all duration-300 ${palette.surface}`}
-                  >
-                    <label className="flex cursor-pointer flex-col items-center justify-center">
-                      <span className={`text-base font-semibold ${palette.textMain}`}>
-                        Upload learning document
-                      </span>
-                      <span className={`mt-2 text-sm ${palette.textBody}`}>
-                        PDF, DOCX, PPTX, XLSX, TXT, CSV
-                      </span>
-                      <input
-                        type="file"
-                        accept={acceptedFileTypes}
-                        onChange={handlePickFile}
-                        className="hidden"
-                      />
-                    </label>
+                <div className={`mt-4 rounded-2xl border border-dashed p-4 ${palette.card}`}>
+                  <label className="block">
+                    <span className={`mb-2 block text-sm font-medium ${palette.textMain}`}>
+                      Upload learning document
+                    </span>
+                    <input
+                      id="file-upload"
+                      type="file"
+                      accept={acceptedFileTypes}
+                      onChange={handlePickFile}
+                      className={`block w-full rounded-xl border px-4 py-3 text-sm ${palette.input}`}
+                    />
+                  </label>
 
+                  <div className="mt-4 flex flex-wrap gap-2">
                     {pendingFile && (
-                      <div className="mt-4 flex flex-col items-center gap-3">
-                        <span
-                          className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
-                        >
-                          Selected: {pendingFile.name}
-                        </span>
-                        <button
-                          onClick={handleSubmitSource}
-                          disabled={isUploading}
-                          className={`${actionBase} max-w-xs ${palette.primary}`}
-                        >
-                          {isUploading ? "Uploading..." : "Submit Source"}
-                        </button>
-                      </div>
+                      <span
+                        className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
+                      >
+                        Selected: {pendingFile.name}
+                      </span>
                     )}
-                  </div>
-                )}
 
-                {(uploadedFileName || hasTypedContent) && (
-                  <div className="mt-4 flex flex-wrap gap-3">
                     {uploadedFileName && (
                       <span
                         className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
@@ -335,253 +461,131 @@ export default function Home() {
                         Uploaded: {uploadedFileName}
                       </span>
                     )}
-                    {hasTypedContent && (
+
+                    {hasContent && (
                       <span
                         className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
                       >
-                        Text ready
+                        Content ready
                       </span>
                     )}
                   </div>
-                )}
+
+                  <div className="mt-4">
+                    <button
+                      onClick={handleExtractText}
+                      disabled={!pendingFile || isUploading}
+                      className={`${actionButton} ${palette.primary}`}
+                    >
+                      {isUploading ? "Processing file..." : "Extract Text"}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div>
-              <div className="mb-4">
-                <h2 className={`text-2xl font-semibold ${palette.textMain}`}>
-                  Generate Study Support
-                </h2>
-                <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
-                  Pick what you want Mwakenya to generate from the source material.
-                </p>
-              </div>
+            <div className={`self-start rounded-2xl border p-4 shadow-sm ${palette.cardSoft}`}>
+              <h2 className={`text-lg font-semibold ${palette.textMain}`}>
+                Coach Actions
+              </h2>
+              <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
+                Choose how ALIP should help you revise.
+              </p>
 
-              <div
-                className={`space-y-3 rounded-3xl border p-4 transition-all duration-300 ${palette.surfaceSoft}`}
-              >
+              <div className="mt-4 space-y-2.5">
                 <button
                   onClick={handleGenerateSummary}
-                  disabled={!hasLearningSource || isSummarizing}
-                  className={`${actionBase} ${
-                    outputView === "summary"
-                      ? palette.selected
-                      : palette.primary
-                  }`}
+                  disabled={!hasContent || isSummarizing}
+                  className={`${actionButton} ${palette.primary}`}
                 >
                   {isSummarizing ? "Generating..." : "Generate Summary"}
                 </button>
 
                 <button
-                  onClick={handleGenerateExplanation}
-                  disabled={!hasLearningSource}
-                  className={`${actionBase} ${
-                    outputView === "explanation"
-                      ? palette.selected
-                      : palette.secondary
-                  }`}
+                  onClick={() => setActiveTab("explanation")}
+                  disabled={!hasContent}
+                  className={`${actionButton} ${palette.secondary}`}
                 >
-                  Generate Explanation
+                  Explain This Topic
                 </button>
 
                 <button
-                  onClick={handleGenerateQuestions}
-                  disabled={!hasLearningSource}
-                  className={`${actionBase} ${
-                    outputView === "questions"
-                      ? palette.selected
-                      : palette.secondary
-                  }`}
+                  onClick={() => setActiveTab("quiz")}
+                  disabled={!hasContent}
+                  className={`${actionButton} ${palette.secondary}`}
                 >
-                  Generate Questions
+                  Quiz Me
                 </button>
 
-                <button onClick={handleClear} className={`${actionBase} ${palette.clear}`}>
+                <button
+                  onClick={() => setActiveTab("flashcards")}
+                  disabled={!hasContent}
+                  className={`${actionButton} ${palette.secondary}`}
+                >
+                  Create Flashcards
+                </button>
+
+                <button
+                  onClick={handleClear}
+                  className={`${actionButton} ${palette.secondary}`}
+                >
                   Clear All
                 </button>
               </div>
+
+              <div className={`mt-4 rounded-2xl border p-4 ${palette.card}`}>
+                <p className={`text-sm font-semibold ${palette.textMain}`}>
+                  Study Coach Tip
+                </p>
+                <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
+                  Start with a summary, then move to quiz practice. That helps
+                  learners shift from passive reading to active revision.
+                </p>
+              </div>
             </div>
           </div>
         </section>
 
-        <section
-          className={`mt-6 rounded-[28px] border p-6 shadow-[0_18px_60px_rgba(0,0,0,0.08)] transition-all duration-300 ${palette.surface}`}
-        >
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <section className={`mt-6 rounded-[28px] border p-5 shadow-sm ${palette.card}`}>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className={`text-2xl font-semibold ${palette.textMain}`}>
+              <h2 className={`text-xl font-semibold ${palette.textMain}`}>
                 Study Output
               </h2>
-              <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
-                Your generated learning support appears here after you select an
-                action.
+              <p className={`mt-2 text-sm leading-7 ${palette.textBody}`}>
+                Review what ALIP has prepared for your revision.
               </p>
             </div>
 
-            {outputView && (
-              <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2">
+              {(["summary", "explanation", "quiz", "flashcards"] as OutputTab[]).map((tab) => (
                 <button
-                  onClick={() => setOutputView("summary")}
-                  className={`${tabBase} ${
-                    outputView === "summary"
-                      ? palette.tabActive
-                      : palette.tabIdle
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`${tabButton} ${
+                    activeTab === tab ? palette.tabActive : palette.tabIdle
                   }`}
                 >
-                  Summary
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
-                <button
-                  onClick={() => setOutputView("explanation")}
-                  className={`${tabBase} ${
-                    outputView === "explanation"
-                      ? palette.tabActive
-                      : palette.tabIdle
-                  }`}
-                >
-                  Explanation
-                </button>
-                <button
-                  onClick={() => setOutputView("questions")}
-                  className={`${tabBase} ${
-                    outputView === "questions"
-                      ? palette.tabActive
-                      : palette.tabIdle
-                  }`}
-                >
-                  Questions
-                </button>
-              </div>
-            )}
+              ))}
+            </div>
           </div>
 
-          {!outputView && (
-            <div
-              className={`mt-6 rounded-3xl border p-6 ${palette.surfaceSoft}`}
-            >
-              <h3 className={`text-lg font-semibold ${palette.textMain}`}>
-                Ready to begin
-              </h3>
-              <p className={`mt-3 text-sm leading-7 ${palette.textBody}`}>
-                Add your learning material first, then choose whether you want
-                a summary, an explanation, or generated revision questions.
-              </p>
-            </div>
-          )}
-
-          {outputView === "summary" && (
-            <div
-              className={`mt-6 rounded-3xl border p-6 ${palette.surfaceSoft}`}
-            >
-              <h3 className={`text-lg font-semibold ${palette.textMain}`}>
-                Generated Summary
-              </h3>
-              <p className={`mt-3 whitespace-pre-line text-sm leading-7 ${palette.textBody}`}>
-                {summaryText}
-              </p>
-            </div>
-          )}
-
-          {outputView === "explanation" && (
-            <div
-              className={`mt-6 rounded-3xl border p-6 ${palette.surfaceSoft}`}
-            >
-              <h3 className={`text-lg font-semibold ${palette.textMain}`}>
-                Generated Explanation
-              </h3>
-              <p className={`mt-3 whitespace-pre-line text-sm leading-7 ${palette.textBody}`}>
-                {explanationText}
-              </p>
-            </div>
-          )}
-
-          {outputView === "questions" && (
-            <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_0.9fr]">
-              <div
-                className={`rounded-3xl border p-6 ${palette.surfaceSoft}`}
-              >
-                <h3 className={`text-lg font-semibold ${palette.textMain}`}>
-                  Generated Revision Questions
-                </h3>
-                <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
-                  These should be generated from the uploaded or pasted source
-                  to help the learner revise and understand the material better.
-                </p>
-
-                <div className="mt-5 space-y-4">
-                  {generatedQuestions.map((item, index) => (
-                    <div
-                      key={index}
-                      className={`rounded-2xl border p-4 ${palette.surface}`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <p className={`text-sm font-semibold ${palette.textMain}`}>
-                          Question {index + 1}
-                        </p>
-                        <span
-                          className={`rounded-full border px-3 py-1 text-xs font-medium ${palette.chip}`}
-                        >
-                          {item.type}
-                        </span>
-                      </div>
-
-                      <p className={`mt-3 text-sm leading-7 ${palette.textBody}`}>
-                        {item.prompt}
-                      </p>
-
-                      {item.options && (
-                        <div className="mt-4 space-y-2">
-                          {item.options.map((option) => (
-                            <div
-                              key={option}
-                              className={`rounded-xl border px-3 py-2 text-sm ${palette.surface}`}
-                            >
-                              {option}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div
-                className={`rounded-3xl border p-6 ${palette.surfaceSoft}`}
-              >
-                <h3 className={`text-lg font-semibold ${palette.textMain}`}>
-                  Assessment Value
-                </h3>
-                <p className={`mt-2 text-sm leading-6 ${palette.textBody}`}>
-                  The question set can include multiple-choice, short-answer,
-                  and true/false items based on the same source material.
-                </p>
-
-                <div className="mt-5 space-y-3">
-                  <div className={`rounded-2xl border p-4 ${palette.surface}`}>
-                    <p className={`text-sm font-semibold ${palette.textMain}`}>
-                      Question styles
-                    </p>
-                    <ul className={`mt-3 space-y-2 text-sm ${palette.textBody}`}>
-                      <li>• Multiple-choice questions</li>
-                      <li>• Short-answer questions</li>
-                      <li>• True / False questions</li>
-                    </ul>
-                  </div>
-
-                  <div className={`rounded-2xl border p-4 ${palette.surface}`}>
-                    <p className={`text-sm font-semibold ${palette.textMain}`}>
-                      Why this matters
-                    </p>
-                    <p className={`mt-3 text-sm leading-6 ${palette.textBody}`}>
-                      It helps the learner move from passive reading into active
-                      recall, understanding, and revision.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+          <div className="mt-5">{renderTabContent()}</div>
         </section>
+
+        {errorMessage && (
+          <div className={`mt-6 rounded-2xl border px-4 py-3 text-sm font-medium ${palette.error}`}>
+            {errorMessage}
+          </div>
+        )}
+
+        {successMessage && (
+          <div className={`mt-6 rounded-2xl border px-4 py-3 text-sm font-medium ${palette.success}`}>
+            {successMessage}
+          </div>
+        )}
       </div>
     </main>
   );

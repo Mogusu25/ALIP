@@ -1,16 +1,20 @@
-from io import BytesIO
 import csv
+import os
 import re
-from collections import Counter
+from io import BytesIO
 
 import pandas as pd
 from docx import Document
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAI
 from openpyxl import load_workbook
 from pydantic import BaseModel
 from pptx import Presentation
 from PyPDF2 import PdfReader
+
+load_dotenv()
 
 app = FastAPI(title="Mwakenya API")
 
@@ -27,14 +31,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    raise RuntimeError("OPENAI_API_KEY is missing. Add it to server/.env")
+
+client = OpenAI(api_key=api_key)
+
 
 class TextRequest(BaseModel):
     content: str
 
 
 def clean_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def extract_pdf_text(file_bytes: bytes) -> str:
@@ -109,59 +118,11 @@ def extract_text_from_upload(filename: str, file_bytes: bytes) -> str:
     )
 
 
-def split_sentences(text: str) -> list[str]:
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    return [s.strip() for s in sentences if s.strip()]
-
-
-def simple_summarize(text: str) -> str:
+def truncate_content(text: str, max_chars: int = 12000) -> str:
     text = clean_text(text)
-
-    if not text:
-        return "No content available to summarize."
-
-    sentences = split_sentences(text)
-
-    if len(sentences) <= 3:
+    if len(text) <= max_chars:
         return text
-
-    words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
-    stop_words = {
-        "the", "and", "for", "that", "with", "this", "from", "have", "will",
-        "your", "into", "their", "about", "there", "been", "were", "which",
-        "when", "what", "where", "while", "them", "then", "than", "also",
-        "these", "those", "because", "using", "used", "use", "such", "more",
-        "some", "many", "very", "much", "only", "over", "under", "after",
-        "before", "between", "within", "through", "across", "material",
-        "content", "document"
-    }
-    filtered_words = [w for w in words if w not in stop_words]
-    freq = Counter(filtered_words)
-
-    scored = []
-    for sentence in sentences:
-        sentence_words = re.findall(r"\b[a-zA-Z]{3,}\b", sentence.lower())
-        score = sum(freq.get(word, 0) for word in sentence_words)
-        scored.append((sentence, score))
-
-    top_sentences = sorted(scored, key=lambda x: x[1], reverse=True)[:4]
-    ordered_top = [item[0] for item in scored if item in top_sentences]
-
-    key_terms = [word for word, _ in freq.most_common(6)]
-
-    summary_parts = []
-    summary_parts.append("Overview:")
-    summary_parts.append(" ".join(ordered_top[:3]).strip())
-
-    if key_terms:
-        summary_parts.append("\nKey terms:")
-        summary_parts.append(", ".join(key_terms))
-
-    if len(sentences) > 4:
-        summary_parts.append("\nStudy takeaway:")
-        summary_parts.append(ordered_top[-1] if ordered_top else sentences[0])
-
-    return "\n".join(summary_parts).strip()
+    return text[:max_chars]
 
 
 @app.get("/")
@@ -203,6 +164,47 @@ def summarize_text(request: TextRequest):
     if not text:
         raise HTTPException(status_code=400, detail="Content is required.")
 
-    summary = simple_summarize(text)
+    prepared_text = truncate_content(text)
 
-    return {"summary": summary}
+    try:
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an expert educational AI tutor inside the "
+                        "Adaptive Learning Intelligence Platform (ALIP). "
+                        "Your job is to produce a strong student-friendly "
+                        "summary for revision."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "Read the study material below and produce a summary.\n\n"
+                        "Rules:\n"
+                        "1. Rewrite the material in your own words.\n"
+                        "2. Make the summary clear, accurate, and useful for revision.\n"
+                        "3. Focus on the main ideas, definitions, relationships, and applications.\n"
+                        "4. Do not copy the original text unless necessary.\n"
+                        "5. Do not invent facts that are not in the source.\n"
+                        "6. Keep the summary detailed enough to be useful, but not too long.\n\n"
+                        f"Study material:\n{prepared_text}"
+                    ),
+                },
+            ],
+        )
+
+        summary = (response.output_text or "").strip()
+
+        if not summary:
+            raise HTTPException(status_code=500, detail="No summary returned.")
+
+        return {"summary": summary}
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Summary generation failed: {str(e)}",
+        )
